@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#0b0814">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <title>Super Dario World</title>
+  <meta name="description" content="An unofficial, non-commercial fan parody platformer about the AI race.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%236b4fd6'/%3E%3Cpath d='M3 4l4 4-4 4' stroke='%23fff' stroke-width='2' fill='none'/%3E%3Crect x='8' y='11' width='5' height='2' fill='%23fff'/%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #0b0814; --btn: rgba(255, 255, 255, 0.13); --btn-on: rgba(155, 132, 255, 0.6);
+      --edge: rgba(255, 255, 255, 0.4); --safe-b: env(safe-area-inset-bottom, 0px);
+      --safe-l: env(safe-area-inset-left, 0px); --safe-r: env(safe-area-inset-right, 0px);
+    }
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html, body { margin: 0; height: 100%; background: var(--bg); overflow: hidden; overscroll-behavior: none; }
+    body {
+      touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
+      font-family: "Press Start 2P", monospace; color: #fff;
+    }
+    #app { position: fixed; inset: 0; display: flex; flex-direction: column; }
+    #stage { position: relative; flex: 1 1 auto; min-height: 0; display: flex; align-items: center; justify-content: center; }
+    canvas { image-rendering: pixelated; image-rendering: crisp-edges; display: block; }
+
+    /* Touch controls: hidden until a touch screen is detected (see src/core.js). */
+    #touch { display: none; }
+    body.touch #touch { display: flex; justify-content: space-between; align-items: center; pointer-events: none; }
+    #touch > * { pointer-events: auto; }
+    #dpad {
+      position: relative; width: 150px; height: 150px; border-radius: 50%;
+      background: var(--btn); border: 2px solid var(--edge); touch-action: none;
+    }
+    #dpad span {
+      position: absolute; width: 50px; height: 50px; display: flex; align-items: center; justify-content: center;
+      font-size: 16px; border-radius: 10px; color: rgba(255, 255, 255, 0.85);
+    }
+    #dpad span.on { background: var(--btn-on); }
+    #dpad .u { left: 48px; top: 2px; } #dpad .d { left: 48px; bottom: 2px; }
+    #dpad .l { left: 2px; top: 48px; } #dpad .r { right: 2px; top: 48px; }
+    #actions { display: grid; grid-template-columns: auto auto; grid-template-rows: auto auto; gap: 10px 14px; align-items: end; }
+    #actions button {
+      width: 74px; height: 74px; border-radius: 50%; border: 2px solid var(--edge);
+      background: var(--btn); color: #fff; font: 10px "Press Start 2P", monospace; touch-action: none; padding: 0;
+    }
+    #actions button.on { background: var(--btn-on); }
+    #actions .jump { grid-column: 2; grid-row: 1 / span 2; width: 84px; height: 84px; }
+    #actions .spark { grid-column: 1; grid-row: 2; }
+    #actions .start { grid-column: 1; grid-row: 1; width: 54px; height: 30px; border-radius: 15px; font-size: 8px; justify-self: center; }
+    #fs {
+      display: none; position: absolute; top: 8px; right: calc(8px + var(--safe-r)); z-index: 2;
+      width: 34px; height: 34px; border-radius: 8px; border: 2px solid var(--edge); background: var(--btn);
+      color: #fff; font: 12px monospace; padding: 0;
+    }
+    body.touch.can-fs #fs { display: block; }
+    #tip { display: none; position: absolute; left: 0; right: 0; bottom: 10px; text-align: center; font-size: 8px; line-height: 14px; color: #6b5a9a; }
+    body.touch.portrait #tip { display: block; }
+
+    /* Portrait phone: game on top, controller underneath. */
+    body.touch.portrait #touch {
+      flex: 0 0 auto; padding: 14px calc(18px + var(--safe-r)) calc(18px + var(--safe-b)) calc(18px + var(--safe-l));
+      min-height: 210px;
+    }
+    /* Landscape phone: controls float over the left and right edges. */
+    body.touch.landscape #touch {
+      position: absolute; inset: auto 0 0 0; z-index: 1; align-items: flex-end;
+      padding: 0 calc(10px + var(--safe-r)) calc(10px + var(--safe-b)) calc(10px + var(--safe-l));
+    }
+    body.touch.landscape #dpad, body.touch.landscape #actions button { opacity: 0.8; }
+    body.touch.landscape #actions { grid-template-columns: auto; grid-template-rows: auto auto auto; gap: 10px; justify-items: center; }
+    body.touch.landscape #actions .start { grid-column: 1; grid-row: 1; }
+    body.touch.landscape #actions .spark { grid-column: 1; grid-row: 3; }
+    body.touch.landscape #actions .jump { grid-column: 1; grid-row: 2; }
+    body.touch.landscape #dpad { width: 130px; height: 130px; }
+    body.touch.landscape #dpad .u, body.touch.landscape #dpad .d { left: 38px; }
+    body.touch.landscape #dpad .l, body.touch.landscape #dpad .r { top: 38px; }
+    @media (max-height: 360px) {
+      body.touch.landscape #dpad { transform: scale(0.82); transform-origin: bottom left; }
+      body.touch.landscape #actions { transform: scale(0.82); transform-origin: bottom right; }
+    }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <div id="stage">
+      <canvas id="screen" width="384" height="224"></canvas>
+      <button id="fs" aria-label="Fullscreen">&#x26F6;</button>
+      <div id="tip">TIP: TURN YOUR PHONE SIDEWAYS<br>FOR A BIGGER SCREEN</div>
+    </div>
+    <div id="touch">
+      <div id="dpad" aria-label="Direction pad">
+        <span class="u" data-dir="up">&#9650;</span>
+        <span class="l" data-dir="left">&#9664;</span>
+        <span class="r" data-dir="right">&#9654;</span>
+        <span class="d" data-dir="down">&#9660;</span>
+      </div>
+      <div id="actions">
+        <button class="start" data-btn="start" aria-label="Pause">II</button>
+        <button class="spark" data-btn="spark" aria-label="Zap">ZAP</button>
+        <button class="jump" data-btn="jump" aria-label="Jump">JUMP</button>
+      </div>
+    </div>
+  </div>
+  <script src="src/core.js"></script>
+  <script src="src/audio.js"></script>
+  <script src="src/art.js"></script>
+  <script src="src/levels.js"></script>
+  <script src="src/entities.js"></script>
+  <script src="src/bosses.js"></script>
+  <script src="src/world.js"></script>
+  <script src="src/modes/rackstack.js"></script>
+  <script src="src/modes/race.js"></script>
+  <script src="src/modes/maze.js"></script>
+  <script src="src/shop.js"></script>
+  <script src="src/game.js"></script>
+</body>
+</html>
