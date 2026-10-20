@@ -388,8 +388,12 @@
           e.kick(this, p);
           continue;
         }
-        const falling = p.vy > 0 && p.y + p.h - p.vy <= e.y + 8;
-        if (falling && e.stompable) {
+        // A stomp is about where Dario's feet were, relative to the enemy, a
+        // moment ago, so an enemy hopping up into him from below still counts.
+        const evy = e.vy || 0;
+        const closing = p.vy - evy > 0;
+        const feetAbove = p.y + p.h - p.vy <= e.y - evy + 8;
+        if (closing && feetAbove && e.stompable) {
           e.stomp(this, p);
           p.combo++;
           const chain = [100, 200, 400, 800, 1000, 2000, 4000, 8000];
@@ -405,7 +409,9 @@
           p.y = Math.min(p.y, e.y - p.h + 2);
           if (e.isBoss) p.vy = -6.5;
         } else if (!(e.type === 'robot' && e.kickGrace > 0)) {
-          p.hurt();
+          // Forgive grazes: only a solid touch hurts.
+          const core = { x: e.x + 2, y: e.y + 3, w: e.w - 4, h: e.h - 3 };
+          if (e.isBoss || e.proj || SDW.overlap(p, core)) p.hurt();
         }
       }
     }

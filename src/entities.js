@@ -334,8 +334,11 @@
     constructor(x, y) { super(x * T + 1, (y + 1) * T - 12, 14, 12); this.type = 'hopper'; this.hopT = 40; }
     update(world) {
       this.t++;
-      if (this.onGround && --this.hopT <= 0) {
-        this.vy = -4.6;
+      // Don't ambush Dario: no surprise hops when he's right next to us.
+      const p = world.player;
+      const near = Math.abs(p.x + p.w / 2 - (this.x + this.w / 2)) < 48;
+      if (this.onGround && --this.hopT <= 0 && !near) {
+        this.vy = -4.1;
         this.hopT = 50;
         this.onGround = false;
       }
