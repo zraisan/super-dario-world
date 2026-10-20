@@ -17,9 +17,16 @@ SDW.audio = (() => {
     ctx = new AC();
     master = ctx.createGain();
     master.gain.value = muted ? 0 : 0.5;
-    master.connect(ctx.destination);
+    // A gentle compressor glues the mix and stops loud moments clipping.
+    const comp = ctx.createDynamicsCompressor();
+    comp.threshold.value = -16;
+    comp.ratio.value = 3;
+    comp.attack.value = 0.004;
+    comp.release.value = 0.2;
+    master.connect(comp);
+    comp.connect(ctx.destination);
     musicBus = ctx.createGain();
-    musicBus.gain.value = 0.55;
+    musicBus.gain.value = 0.7;
     musicBus.connect(master);
     sfxBus = ctx.createGain();
     sfxBus.gain.value = 0.8;
@@ -119,132 +126,290 @@ SDW.audio = (() => {
   };
 
   // ------------------------------------------------------------ music --
-  // Each song: tempo, a lead line ("note:eighths" tokens, "-" = rest),
-  // one bass root per bar, and an 8-step drum pattern (k kick, s snare, h hat).
+  // A small chiptune band: a pulse-wave lead with vibrato and echo, a quiet
+  // arpeggio playing the chords, a harmony voice on every second loop, a
+  // triangle bass and a drum kit with fills. Songs are written as:
+  //   voice:  lead instrument (pulse25, pulse12, triangle, saw)
+  //   chords: one chord per bar, e.g. 'C3 G2 A2:m F2:maj7' (root + octave)
+  //   lead:   "note:eighths" tokens, '-' is a rest
+  //   leadB / chordsB: an optional second section (song plays A then B)
+  //   bass:   8 eighth-steps of chord degrees: R root, 3, 5, 8 octave, . rest
+  //   arp:    8 eighth-steps of chord degrees (1 3 5 8), . rest
+  //   drums:  16 sixteenth-steps: k kick, s snare, h hat, o open hat
   const SONGS = {
     plains: {
-      bpm: 150, wave: 'square', drums: 'k.h.s.hh',
-      chords: 'C3 G2 A2 F2 C3 G2 F2 G2',
-      lead: `E5:2 G5:1 E5:1 C5:2 D5:2  D5:1 E5:1 D5:1 B4:1 G4:4
-             A4:2 C5:1 E5:1 A5:2 G5:2  F5:1 E5:1 D5:1 C5:1 A4:2 C5:2
-             E5:1 E5:1 G5:2 C6:2 B5:1 A5:1  G5:2 D5:2 B4:2 D5:2
-             A4:1 C5:1 F5:2 E5:1 D5:1 C5:2  D5:2 B4:2 G4:2 -:2`,
+      bpm: 148, voice: 'pulse25', echo: 0.28,
+      chords: 'C3 G2 A2:m F2 C3 G2 F2 G2',
+      lead: `G4:1 C5:1 E5:1 G5:1 -:1 E5:1 G5:2  F5:1 E5:1 D5:2 B4:2 G4:2
+             A4:1 C5:1 E5:1 A5:1 -:1 G5:1 E5:2  F5:2 E5:1 C5:1 A4:4
+             G4:1 C5:1 E5:1 G5:1 -:1 C6:1 B5:1 C6:1  D6:2 B5:2 G5:2 D5:2
+             A5:1 G5:1 F5:1 E5:1 D5:1 C5:1 A4:2  B4:2 D5:2 G5:3 -:1`,
+      chordsB: 'F2 G2 E2:m A2:m F2 G2 E2:m G2',
+      leadB: `A5:3 G5:1 F5:2 C5:2  D5:1 E5:1 F5:1 G5:1 B5:2 G5:2
+              E5:3 D5:1 E5:2 G5:2  A5:2 E5:2 C5:2 A4:2
+              F5:1 A5:1 C6:2 A5:1 F5:1 C5:2  D5:1 G5:1 B5:2 D6:2 B5:2
+              G5:2 E5:1 G5:1 B5:2 G5:2  F5:1 E5:1 D5:1 B4:1 G4:2 -:2`,
+      bass: 'R.8.R.85', arp: '1358.53.', drums: 'k.h.s.hhk.hks.h.',
     },
     cave: {
-      bpm: 112, wave: 'triangle', drums: 'k...s..h',
-      chords: 'A2 A2 F2 G2 A2 A2 D3 E2',
+      bpm: 112, voice: 'triangle', leadVol: 0.16, echo: 0.38,
+      chords: 'A2:m A2:m F2 G2 A2:m A2:m D3:m E2',
       lead: `A4:3 C5:1 E5:2 -:2  D5:1 C5:1 B4:2 A4:4
              F4:2 A4:2 C5:3 B4:1  B4:2 D5:2 G4:4
              A4:3 E5:1 A5:2 G5:1 E5:1  F5:2 E5:2 C5:4
              D5:2 F5:2 A5:2 F5:2  E5:2 G#4:2 B4:2 E4:2`,
+      bass: 'R..R5..8', arp: '1.5.8.5.', drums: 'k.....h.s...h.h.',
     },
     sky: {
-      bpm: 128, wave: 'square', drums: 'k.hhs.h.',
-      chords: 'D3 E3 B2 G2 D3 E3 G2 A2',
+      bpm: 128, voice: 'pulse12', echo: 0.3,
+      chords: 'D3 E3 B2:m G2 D3 E3 G2 A2',
       lead: `F#5:2 A5:2 D6:2 A5:2  G#5:2 B5:2 E5:4
              D5:1 F#5:1 B5:2 A5:2 F#5:2  G5:2 B4:2 D5:4
              A5:1 F#5:1 D5:2 A4:2 D5:2  E5:1 G#5:1 B5:2 E6:2 B5:2
              D6:2 B5:1 G5:1 D5:2 B4:2  C#5:2 E5:2 A5:4`,
+      bass: 'R.5.8.5.', arp: '13581358', drums: 'k.hhs.h.k.hhs.ho',
     },
     castle: {
-      bpm: 156, wave: 'sawtooth', drums: 'k.hsk.hs',
-      chords: 'D3 D3 Bb2 C3 D3 D3 G2 A2',
+      bpm: 156, voice: 'saw', echo: 0.22,
+      chords: 'D3:m D3:m Bb2 C3 D3:m D3:m G2:m A2',
       lead: `D5:1 -:1 D5:1 F5:1 A5:2 G5:1 F5:1  E5:1 F5:1 E5:1 D5:1 C#5:2 A4:2
              Bb4:2 D5:2 F5:2 Bb5:2  A5:1 G5:1 E5:1 C5:1 G5:4
              D5:1 -:1 D5:1 F5:1 A5:2 D6:2  C6:1 A5:1 F5:1 D5:1 A4:4
              G4:2 Bb4:2 D5:2 G5:2  A5:2 G5:1 F5:1 E5:2 C#5:2`,
+      bass: 'RR8RRR8R', arp: '15851585', drums: 'k.h.s.k.k.h.s.hs',
     },
     boss: {
-      bpm: 172, wave: 'sawtooth', drums: 'kshskshs',
-      chords: 'E3 E3 C3 D3 E3 E3 B2 B2',
+      bpm: 172, voice: 'saw', echo: 0.2,
+      chords: 'E3:m E3:m C3 D3 E3:m E3:m B2 B2',
       lead: `E5:1 E5:1 G5:1 E5:1 B5:2 A5:1 G5:1  F#5:1 G5:1 F#5:1 E5:1 D#5:2 B4:2
              C5:1 E5:1 G5:1 C6:1 B5:2 G5:2  A5:1 F#5:1 D5:1 A4:1 D5:4
              E5:1 B4:1 E5:1 G5:1 B5:2 E6:2  D6:1 B5:1 G5:1 E5:1 B4:4
              B4:1 D#5:1 F#5:1 B5:1 A5:2 F#5:2  D#5:2 F#5:2 B4:4`,
+      bass: 'R8R8R8R8', arp: '13581358', drums: 'k.hsk.hsk.hsk.ss',
     },
     stack: {
-      bpm: 140, wave: 'square', drums: 'k.h.s.h.',
-      chords: 'G2 E2 C3 D3 G2 E2 C3 D3',
+      bpm: 140, voice: 'pulse25', echo: 0.25,
+      chords: 'G2 E2:m C3 D3 G2 E2:m C3 D3',
       lead: `B4:2 D5:1 G5:1 F#5:2 E5:2  D5:2 B4:2 G4:4
              E5:1 G5:1 B5:2 A5:2 G5:2  F#5:2 E5:1 D5:1 E5:4
              C5:2 E5:1 G5:1 C6:2 B5:2  A5:1 G5:1 F#5:1 E5:1 D5:4
              B4:1 D5:1 G5:2 F#5:1 A5:1 D6:2  C6:2 A5:2 F#5:2 D5:2`,
+      bass: 'R.5.R.5.', arp: '1358.85.', drums: 'k.h.s.h.k.h.s.hh',
     },
     race: {
-      bpm: 176, wave: 'square', drums: 'k.hsk.hs',
-      chords: 'A2 F2 G2 E2 A2 F2 D3 E2',
+      bpm: 176, voice: 'pulse25', echo: 0.18,
+      chords: 'A2:m F2 G2 E2 A2:m F2 D3:m E2',
       lead: `A4:1 C5:1 E5:1 A5:1 G5:2 E5:2  F5:1 A5:1 C6:2 A5:2 F5:2
              G5:1 D5:1 B4:1 D5:1 G5:2 B5:2  G#5:2 E5:2 B4:4
              A5:1 A5:1 C6:2 B5:1 A5:1 E5:2  F5:1 E5:1 D5:1 C5:1 A4:4
              D5:2 F5:2 A5:2 D6:2  E6:2 D6:1 B5:1 G#5:2 E5:2`,
+      bass: 'R8R8R8R8', arp: '15851585', drums: 'k.hsk.hsk.hskshs',
     },
     weekend: {
-      bpm: 120, wave: 'triangle', drums: 'k..hk.s.',
-      chords: 'D2 D2 Bb1 C2 D2 D2 G1 A1',
+      bpm: 120, voice: 'triangle', leadVol: 0.17, echo: 0.4,
+      chords: 'D2:m D2:m Bb1 C2 D2:m D2:m G1:m A1',
       lead: `D4:2 F4:2 A4:3 G4:1  F4:2 E4:2 D4:4
              Bb3:2 D4:2 F4:2 E4:2  C4:2 E4:2 G4:4
              D4:1 F4:1 A4:1 D5:1 C5:2 A4:2  Bb4:1 A4:1 G4:1 F4:1 E4:4
              G4:2 Bb4:2 D5:2 C5:2  A4:2 C#5:2 E5:4`,
+      bass: 'R..R..5.', arp: '1.3.5.3.', drums: 'k..h..h.s..h.hh.',
     },
     foundry: {
-      bpm: 132, wave: 'square', drums: 'k.hsk.hs',
-      chords: 'E2 E2 G2 A2 E2 E2 C3 B2',
+      bpm: 132, voice: 'pulse25', echo: 0.24,
+      chords: 'E2:m E2:m G2 A2 E2:m E2:m C3 B2',
       lead: `E5:1 -:1 E5:1 G5:1 -:1 E5:1 D5:2  B4:2 D5:1 E5:1 -:4
              G5:1 -:1 G5:1 A5:1 -:1 G5:1 E5:2  A5:2 B5:1 A5:1 G5:2 E5:2
              E5:1 -:1 E5:1 G5:1 -:1 B5:1 A5:2  G5:1 E5:1 D5:1 B4:1 E5:4
              C5:2 E5:1 G5:1 C6:2 B5:2  B5:1 A5:1 F#5:1 D#5:1 B4:4`,
+      bass: 'R.R8.RR8', arp: '1.5.8.5.', drums: 'k.hsk.hsk.hsk.ho',
     },
     summit: {
-      bpm: 140, wave: 'square', drums: 'k.h.s.hh',
-      chords: 'C3 Ab2 Bb2 C3 C3 Ab2 Bb2 G2',
+      bpm: 140, voice: 'pulse25', echo: 0.3,
+      chords: 'C3:m Ab2 Bb2 C3:m C3:m Ab2 Bb2 G2',
       lead: `C5:2 Eb5:2 G5:3 F5:1  Eb5:2 C5:2 Ab4:4
              Bb4:2 D5:2 F5:2 Bb5:2  C6:4 G5:4
              C5:1 Eb5:1 G5:1 C6:1 Bb5:2 G5:2  Ab5:2 F5:2 C5:4
              D5:2 F5:2 Bb5:2 F5:2  G5:2 D5:2 B4:4`,
+      bass: 'R.8.5.8.', arp: '13581358', drums: 'k.h.s.hhk.h.s.ho',
     },
     final: {
-      bpm: 184, wave: 'sawtooth', drums: 'kshskshs',
-      chords: 'C3 C3 Ab2 Bb2 C3 C3 F2 G2',
+      bpm: 184, voice: 'saw', echo: 0.18,
+      chords: 'C3:m C3:m Ab2 Bb2 C3:m C3:m F2:m G2',
       lead: `C5:1 C5:1 Eb5:1 G5:1 C6:2 Bb5:1 G5:1  Ab5:1 G5:1 F5:1 Eb5:1 D5:2 G4:2
              Ab4:1 C5:1 Eb5:1 Ab5:1 G5:2 Eb5:2  Bb4:1 D5:1 F5:1 Bb5:1 Ab5:2 F5:2
              C6:1 G5:1 Eb5:1 C5:1 G5:2 C6:2  Eb6:2 D6:1 C6:1 Bb5:2 G5:2
              F5:1 Ab5:1 C6:1 Ab5:1 F5:2 C5:2  G5:2 B5:2 D6:2 G5:2`,
+      bass: 'R8R8R8R8', arp: '15851585', drums: 'k.hsk.hsk.hskshs',
     },
     shop: {
-      bpm: 96, wave: 'triangle', drums: 'k..hs..h',
-      chords: 'F2 D2 G2 C3 F2 D2 G2 C3',
+      bpm: 96, voice: 'triangle', leadVol: 0.17, echo: 0.35, swing: 0.33,
+      chords: 'F2:maj7 D2:m7 G2:m7 C3:7 F2:maj7 D2:m7 G2:m7 C3:7',
       lead: `A4:3 C5:1 F5:2 E5:2  D5:3 F5:1 A5:4
              G5:2 F5:1 E5:1 D5:2 Bb4:2  C5:2 E5:2 G5:4
              A5:3 G5:1 F5:2 C5:2  D5:2 F#5:2 A5:4
              Bb5:2 A5:1 G5:1 F5:2 D5:2  E5:2 G5:2 F5:4`,
+      bass: 'R.5.8.5.', arp: '1.3.5.8.', drums: 'k..hs..hk..hs.h.',
     },
     map: {
-      bpm: 104, wave: 'triangle', drums: 'k...k.h.',
-      chords: 'F2 C3 D3 Bb2 F2 C3 Bb2 C3',
+      bpm: 104, voice: 'pulse25', echo: 0.32, swing: 0.2,
+      chords: 'F2 C3 D3:m Bb2 F2 C3 Bb2 C3',
       lead: `A4:2 C5:2 F5:3 E5:1  E5:2 G5:2 C5:4
              D5:2 F5:2 A5:2 G5:1 F5:1  F5:2 D5:2 Bb4:4
              C5:1 F5:1 A5:2 C6:2 A5:2  G5:2 E5:1 C5:1 G4:4
              Bb4:2 D5:2 F5:2 D5:2  E5:2 G5:2 C5:2 -:2`,
+      bass: 'R.5.R.5.', arp: '1358.53.', drums: 'k...s.h.k.h.s.h.',
     },
   };
-  const BASS = [0, -1, 7, -1, 12, -1, 7, -1];
 
-  function compile(song) {
-    if (song.steps) return song;
-    const roots = song.chords.split(/\s+/).map(midi);
-    const total = roots.length * 8;
+  const QUALITY = { '': [0, 4, 7], m: [0, 3, 7], maj7: [0, 4, 7, 11], m7: [0, 3, 7, 10], 7: [0, 4, 7, 10] };
+  const DEGREE = { R: 0, 1: 0, 3: 1, 5: 2, 8: 3 };
+
+  function parseChords(str) {
+    return str.trim().split(/\s+/).map((tok) => {
+      const [n, q = ''] = tok.split(':');
+      return { root: midi(n), iv: QUALITY[q] };
+    });
+  }
+  function parseLead(str, total) {
     const lead = new Array(total).fill(null);
     let pos = 0;
-    for (const tok of song.lead.trim().split(/\s+/)) {
+    for (const tok of str.trim().split(/\s+/)) {
       const [n, len] = tok.split(':');
       if (n !== '-') lead[pos] = { m: midi(n), len: +len };
       pos += +len;
     }
     if (pos !== total) console.warn('song length mismatch', pos, total);
-    song.steps = total;
+    return lead;
+  }
+
+  function compile(song) {
+    if (song.chordList) return song;
+    let chords = parseChords(song.chords);
+    let lead = parseLead(song.lead, chords.length * 8);
+    if (song.leadB) {
+      const cb = parseChords(song.chordsB);
+      lead = lead.concat(parseLead(song.leadB, cb.length * 8));
+      chords = chords.concat(cb);
+    }
+    song.chordList = chords;
     song.leadSteps = lead;
-    song.roots = roots;
+    song.steps = chords.length * 16;
     return song;
+  }
+
+  // Chord tone n (0 root, 1 third, 2 fifth, 3 octave) of a chord.
+  const chordTone = (c, n) => (n === 3 ? c.root + 12 : c.root + c.iv[Math.min(n, c.iv.length - 1)]);
+  // A harmony note: the nearest chord tone at least a third below the melody.
+  function harmonyFor(m, c) {
+    let best = null;
+    for (let o = -2; o <= 4; o++) {
+      for (const iv of c.iv) {
+        const h = c.root + iv + o * 12;
+        if (h <= m - 3 && (best == null || h > best)) best = h;
+      }
+    }
+    return best;
+  }
+
+  // ---- instruments
+  const waves = {};
+  function pulseWave(duty) {
+    if (!waves[duty]) {
+      const n = 48;
+      const re = new Float32Array(n);
+      const im = new Float32Array(n);
+      for (let k = 1; k < n; k++) re[k] = (2 / (k * Math.PI)) * Math.sin(k * Math.PI * duty);
+      waves[duty] = ctx.createPeriodicWave(re, im);
+    }
+    return waves[duty];
+  }
+  function setWave(o, name) {
+    if (name === 'pulse25') o.setPeriodicWave(pulseWave(0.25));
+    else if (name === 'pulse12') o.setPeriodicWave(pulseWave(0.125));
+    else if (name === 'saw') o.type = 'sawtooth';
+    else o.type = name;
+  }
+
+  let leadBus = null;
+  let echoSend = null;
+  let echoDelay = null;
+  function buildBand() {
+    leadBus = ctx.createBiquadFilter();
+    leadBus.type = 'lowpass';
+    leadBus.frequency.value = 3400;
+    leadBus.Q.value = 0.4;
+    leadBus.connect(musicBus);
+    // Dotted-eighth echo, darkened a little on every repeat.
+    echoSend = ctx.createGain();
+    echoDelay = ctx.createDelay(2);
+    const fb = ctx.createGain();
+    fb.gain.value = 0.32;
+    const dark = ctx.createBiquadFilter();
+    dark.type = 'lowpass';
+    dark.frequency.value = 2200;
+    echoSend.connect(echoDelay);
+    echoDelay.connect(dark);
+    dark.connect(fb);
+    fb.connect(echoDelay);
+    dark.connect(musicBus);
+  }
+
+  function note(freq, when, dur, o) {
+    const osc = ctx.createOscillator();
+    const g = ctx.createGain();
+    setWave(osc, o.wave);
+    osc.frequency.setValueAtTime(freq, when);
+    const v = o.vol;
+    const a = o.attack || 0.006;
+    g.gain.setValueAtTime(0.0001, when);
+    g.gain.linearRampToValueAtTime(v, when + a);
+    g.gain.setTargetAtTime(v * (o.sustain == null ? 0.65 : o.sustain), when + a, o.decay || 0.08);
+    g.gain.setTargetAtTime(0.0001, when + dur, o.release || 0.03);
+    osc.connect(g);
+    g.connect(o.bus);
+    if (o.echo) {
+      const s = ctx.createGain();
+      s.gain.value = o.echo;
+      g.connect(s);
+      s.connect(echoSend);
+    }
+    if (o.vib && dur > 0.28) {
+      const lfo = ctx.createOscillator();
+      const lg = ctx.createGain();
+      lfo.frequency.value = 5.5;
+      lg.gain.setValueAtTime(0, when);
+      lg.gain.linearRampToValueAtTime(freq * 0.007, when + Math.min(0.35, dur * 0.6));
+      lfo.connect(lg);
+      lg.connect(osc.frequency);
+      lfo.start(when);
+      lfo.stop(when + dur + 0.25);
+    }
+    osc.start(when);
+    osc.stop(when + dur + 0.25);
+  }
+
+  function drum(kind, when, accent = 1) {
+    if (kind === 'k') {
+      const o = ctx.createOscillator();
+      const g = ctx.createGain();
+      o.type = 'sine';
+      o.frequency.setValueAtTime(150, when);
+      o.frequency.exponentialRampToValueAtTime(42, when + 0.13);
+      g.gain.setValueAtTime(0.4 * accent, when);
+      g.gain.exponentialRampToValueAtTime(0.0001, when + 0.2);
+      o.connect(g);
+      g.connect(musicBus);
+      o.start(when);
+      o.stop(when + 0.22);
+    } else if (kind === 's') {
+      noise(0.13, { vol: 0.15 * accent, freq: 1800, filter: 'bandpass', when, bus: musicBus });
+      noise(0.05, { vol: 0.08 * accent, freq: 5000, when, bus: musicBus });
+      tone(190, 0.07, { slide: 130, type: 'triangle', vol: 0.12 * accent, when, bus: musicBus });
+    } else if (kind === 'h') {
+      noise(0.025, { vol: 0.045 * accent, freq: 8000, when, bus: musicBus });
+    } else if (kind === 'o') {
+      noise(0.16, { vol: 0.04 * accent, freq: 7000, when, bus: musicBus });
+    }
   }
 
   let wanted = null;
@@ -260,8 +425,10 @@ SDW.audio = (() => {
     if (current === SONGS[name] && timer) return;
     stopTimer();
     current = compile(SONGS[name]);
+    if (!leadBus) buildBand();
+    echoDelay.delayTime.setValueAtTime((60 / current.bpm) * 0.75, ctx.currentTime);
     step = 0;
-    nextTime = ctx.currentTime + 0.05;
+    nextTime = ctx.currentTime + 0.06;
     timer = setInterval(schedule, 25);
   }
 
@@ -278,21 +445,53 @@ SDW.audio = (() => {
 
   function schedule() {
     const s = current;
-    const dt = 60 / s.bpm / 2;
-    while (nextTime < ctx.currentTime + 0.12) {
+    const d16 = 60 / s.bpm / 4;
+    const drums = s.drums.length === 8 ? s.drums.split('').map((c) => c + '.').join('') : s.drums;
+    const leadWave = s.voice || 'pulse25';
+    while (nextTime < ctx.currentTime + 0.15) {
       const i = step % s.steps;
-      const ev = s.leadSteps[i];
-      if (ev) {
-        tone(midiHz(ev.m), ev.len * dt * 0.9, { type: s.wave, vol: s.wave === 'sawtooth' ? 0.05 : 0.08, when: nextTime, bus: musicBus });
+      const pass = Math.floor(step / s.steps);
+      const bar = Math.floor(i / 16);
+      const inBar = i % 16;
+      const c = s.chordList[bar];
+      const t = nextTime + (inBar % 2 ? (s.swing || 0) * d16 : 0);
+
+      if (inBar % 2 === 0) {
+        const e = i / 2;
+        const ev = s.leadSteps[e];
+        if (ev) {
+          const dur = ev.len * 2 * d16 * 0.92;
+          const isSaw = leadWave === 'saw';
+          note(midiHz(ev.m), t, dur, { wave: leadWave, vol: s.leadVol || (isSaw ? 0.06 : 0.09), bus: leadBus, vib: true, echo: s.echo });
+          // Second time round, a quieter voice harmonises under the melody.
+          if (pass % 2 === 1) {
+            const h = harmonyFor(ev.m, c);
+            if (h) note(midiHz(h), t, dur, { wave: 'pulse12', vol: 0.035, bus: leadBus, sustain: 0.5 });
+          }
+        }
+        const b = s.bass[(e % 8)];
+        if (b && b !== '.') {
+          const bn = chordTone(c, DEGREE[b]) - (c.root >= 48 ? 12 : 0);
+          note(midiHz(bn), t, d16 * 1.7, { wave: 'triangle', vol: 0.15, bus: musicBus, sustain: 0.6, decay: 0.1 });
+        }
+        const a = s.arp[(e % 8)];
+        if (a && a !== '.') {
+          const an = chordTone(c, DEGREE[a]) + 12;
+          note(midiHz(an), t, d16 * 0.9, { wave: 'pulse12', vol: pass % 2 ? 0.03 : 0.022, bus: leadBus, sustain: 0.3, decay: 0.05, echo: 0.5 });
+        }
       }
-      const root = s.roots[Math.floor(i / 8)];
-      const b = BASS[i % 8];
-      if (b >= 0) tone(midiHz(root + b), dt * 0.9, { type: 'triangle', vol: 0.16, when: nextTime, bus: musicBus });
-      const d = s.drums[i % 8];
-      if (d === 'k') tone(120, 0.12, { slide: 40, type: 'sine', vol: 0.35, when: nextTime, bus: musicBus });
-      else if (d === 's') noise(0.1, { vol: 0.12, freq: 1500, when: nextTime, bus: musicBus });
-      else if (d === 'h') noise(0.03, { vol: 0.05, freq: 7000, when: nextTime, bus: musicBus });
-      nextTime += dt;
+
+      // Drums, with a snare roll at the end of every 8-bar phrase.
+      const fill = bar % 8 === 7 && inBar >= 12;
+      if (fill) {
+        if (inBar === 12) drum('k', t);
+        drum('s', t, 0.55 + (inBar - 12) * 0.15);
+      } else {
+        const d = drums[inBar];
+        if (d && d !== '.') drum(d, t, inBar % 4 === 0 ? 1 : 0.8);
+        if (bar % 8 === 0 && inBar === 0 && pass > 0) drum('o', t, 1.4); // crash-ish on the downbeat
+      }
+      nextTime += d16;
       step++;
     }
   }
